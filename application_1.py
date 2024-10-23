@@ -35,9 +35,10 @@ def parse_condition(condition_str):
     Returns:
     dict: A dictionary with 'attribute', 'operator', and 'value'.
     """
-    match = re.match(r"(\w+)\s*(>|<|>=|<=|==|!=)\s*(\w+)", condition_str)
+    match = re.match(r"(\w+)\s*(>|<|>=|<=|==|!=)\s*(\w+|'[^']+')", condition_str)
     if match:
         attribute, operator, value = match.groups()
+        value = value.strip("'")  # Remove quotes around string values
         try:
             value = int(value)  # Try converting value to an integer
         except ValueError:
@@ -57,28 +58,48 @@ def create_rule(rule_str):
     Returns:
     Node: The root of the AST representing the rule.
     """
-    rule_str = rule_str.strip()
-    # Split the string into conditions and operators using regex
-    tokens = re.split(r"(\sAND\s|\sOR\s)", rule_str)
-    
-    current_node = None
-    for token in tokens:
-        token = token.strip()
-        if token == "AND" or token == "OR":
-            # Create an operator node
-            new_node = Node(node_type="operator", value=token)
-            new_node.left = current_node
-            current_node = new_node
-        else:
-            # Create an operand node (condition)
-            condition = parse_condition(token)
-            operand_node = Node(node_type="operand", value=condition)
-            if current_node and current_node.type == "operator" and not current_node.right:
-                current_node.right = operand_node
+    # Define a regex to correctly split tokens, including parentheses
+    tokens = re.findall(r'\(|\)|\sAND\s|\sOR\s|[^()ANDOR]+', rule_str)
+
+    def get_next_token():
+        """Helper to retrieve the next token from the token list."""
+        return tokens.pop(0).strip() if tokens else None
+
+    def parse_expression():
+        """Parse the rule expression and build the AST."""
+        stack = []
+        current_node = None
+
+        while tokens:
+            token = get_next_token()
+
+            if token == "(":
+                stack.append(current_node)
+                current_node = None
+            elif token == ")":
+                if stack:
+                    previous_node = stack.pop()
+                    if previous_node:
+                        if previous_node.type == "operator" and not previous_node.right:
+                            previous_node.right = current_node
+                        current_node = previous_node
+            elif token == "AND" or token == "OR":
+                # Create an operator node
+                new_node = Node(node_type="operator", value=token.strip())
+                new_node.left = current_node
+                current_node = new_node
             else:
-                current_node = operand_node
-                
-    return current_node
+                # It's a condition (operand)
+                condition = parse_condition(token)
+                operand_node = Node(node_type="operand", value=condition)
+                if current_node and current_node.type == "operator" and not current_node.right:
+                    current_node.right = operand_node
+                else:
+                    current_node = operand_node
+
+        return current_node
+
+    return parse_expression()
 
 # Function to combine multiple rules (ASTs) into one
 def combine_rules(rules, operator="AND"):
@@ -125,6 +146,8 @@ def evaluate_condition(condition, data):
     operator = condition["operator"]
     value = condition["value"]
     
+    print(f"Evaluating condition: {condition} with data: {data}")
+    
     if operator == ">":
         return attribute_value > value
     elif operator == "<":
@@ -153,10 +176,13 @@ def evaluate_rule(node, data):
     bool: True if the rule evaluates to True, False otherwise.
     """
     if node.type == "operand":
-        return evaluate_condition(node.value, data)
+        result = evaluate_condition(node.value, data)
+        print(f"Evaluating operand: {node.value}, result: {result}")
+        return result
     elif node.type == "operator":
         left_result = evaluate_rule(node.left, data)
         right_result = evaluate_rule(node.right, data)
+        print(f"Evaluating operator: {node.value}, left_result: {left_result}, right_result: {right_result}")
         if node.value == "AND":
             return left_result and right_result
         elif node.value == "OR":
